@@ -8,6 +8,7 @@ ports:
 
 image: 
  repositary: sudarshanacr.azurecr.io/axion-telemetary-service
+ tags: 101
  
 
 secretKeyRef:
