@@ -53,19 +53,13 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              - task: PowerShell@2
-                        inputs:
-                          targetType: inline
-                          script: |
-                            $token = $env:GITHUB_PAT
+              $token = $env:GITHUB_PAT
               
-                            if ([string]::IsNullOrWhiteSpace($token)) {
-                                throw "GitHub PAT was not passed to the script."
-                            }
+              if ([string]::IsNullOrWhiteSpace($token)) {
+                  throw "GitHub PAT was not passed to the script. Check the GitHubPAT variable group and pipeline authorization."
+              }
               
-                            Write-Host "GitHub PAT received successfully."
-                        env:
-                          GITHUB_PAT: $(GitHubPAT)
+              Write-Host "GitHub PAT received successfully."
 
   - stage:
     displayName: Update Tags in github-> value-dev.yaml and value-pod.yaml
