@@ -1,5 +1,5 @@
 
-pool: axion-agent
+pool: default
 
 trigger:
   - none
@@ -25,7 +25,7 @@ parameters:
   - prod
 
 variables:
-- group: Axion-Project_helm
+- group: Axion_Group_variable
 
 
 stages:
@@ -57,46 +57,88 @@ stages:
           $(Build.BuildId)-BuildId
 
 
-# ============================================================
-# Stage 2 - Helm Deploy
-# ============================================================
-
-- stage: Helm_Deploy_to_Cluster
-  displayName: Helm Deploy Axion UI Service to Kubernetes
-
-  condition: eq('${{ parameters.Deploy_to_KubernetesCluster }}', 'true')
-
+- stage: Update_UI_Helm_Tags
+  displayName: Update UI Dev and Prod Helm Tags
   jobs:
-
-  - job: Helm_Deploy_Axion_UI
-    displayName: Helm Deploy Axion UI
-
+  - job: Update_UI_Git_Files
+    displayName: Update UI Helm Values and Push to Azure Repos
     steps:
+    - checkout: self
+      persistCredentials: true
+      clean: true
 
-    - task: HelmDeploy@1
-      displayName: Helm Upgrade or Install Axion UI
-
+    - task: PowerShell@2
+      displayName: Update UI Helm Tags and Push
+      env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
       inputs:
-        connectionType: 'Azure Resource Manager'
-        azureSubscription: 'axion-helm-project'
-        azureResourceGroup: 'rg_sudarshan'
-        kubernetesCluster: 'kub-sudarshan'
+        targetType: inline
+        script: |
+          $ErrorActionPreference = "Stop"
+          $tag = "$(Build.BuildId)-BuildId"
 
-        namespace: '${{ parameters.Namespace_Environment }}'
+          $files = @(
+            "axion-ui/helm/values-dev.yaml",
+            "axion-ui/helm/values-prod.yaml"
+          )
 
-        command: 'upgrade'
-        chartType: 'FilePath'
+          foreach ($file in $files) {
+            if (!(Test-Path $file)) {
+              throw "File not found: $file"
+            }
 
-        chartPath: 'axion-ui/helm'
+            $content = Get-Content $file -Raw
+            $pattern = '(?ms)(^image:\s*\r?\n(?:(?:[ \t]+.*)?\r?\n)*?[ \t]+(?:tag|tags):\s*)[^\r\n]*'
 
-        releaseName: 'axion-ui'
+            if ([regex]::IsMatch($content, $pattern)) {
+              $content = [regex]::Replace(
+                $content,
+                $pattern,
+                [System.Text.RegularExpressions.MatchEvaluator]{
+                  param($m)
+                  $m.Groups[1].Value + '"' + $tag + '"'
+                },
+                1
+              )
+            }
+            else {
+              throw "Could not find tag/tags under image in $file. Check the YAML structure."
+            }
 
-        valueFile: 'axion-ui/helm/values-${{ parameters.Namespace_Environment }}.yaml'
+            Set-Content -Path $file -Value $content -NoNewline
+            Write-Host "Updated $file to tag $tag"
+          }
 
-        install: true
-        waitForExecution: false
+          git config user.email "azure-pipelines@users.noreply.github.com"
+          git config user.name "Azure DevOps Pipeline"
 
-        arguments: >
-          --create-namespace
-          --set image.tags=$(Build.BuildId)-BuildId
+          git add -- $files
+          if ($LASTEXITCODE -ne 0) {
+            throw "Git add failed"
+          }
 
+          git diff --cached --quiet
+          $diffExitCode = $LASTEXITCODE
+
+          if ($diffExitCode -eq 0) {
+            Write-Host "No changes to commit."
+            exit 0
+          }
+
+          if ($diffExitCode -ne 1) {
+            throw "Git diff failed"
+          }
+
+          git commit -m "Update UI image tag to $tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Git commit failed"
+          }
+
+          git -c http.extraheader="AUTHORIZATION: bearer $env:SYSTEM_ACCESSTOKEN" `
+            push origin HEAD:refs/heads/main
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Push failed. Verify repository access, Contribute permission, and main branch policies."
+          }
+
+          Write-Host "UI Helm tags successfully pushed to Azure Repos."
