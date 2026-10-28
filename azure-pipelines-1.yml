@@ -68,36 +68,25 @@ stages:
                       throw "Values file not found: $file"
                   }
               
-                  $content = Get-Content $file -Raw
+                  $content = Get-Content -Path $file -Raw
               
-                  $imagePattern = '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+[^\r\n]*)?\r?\n)*)'
-                  $imageMatch = [regex]::Match($content, $imagePattern)
+                  # Update only tags: under the image: section
+                  $pattern = '(?ms)(^image:[ \t]*\r?\n(?:(?!^\S)[^\r\n]*\r?\n)*?[ \t]+tags:[ \t]*).*$'
               
-                  if (!$imageMatch.Success) {
-                      throw "Top-level image section not found in $file"
-                  }
-              
-                  $body = $imageMatch.Groups["body"].Value
-                  $tagsPattern = '(?m)^([ \t]+)tags:[ \t]*.*$'
-              
-                  if ([regex]::IsMatch($body, $tagsPattern)) {
-                      $body = [regex]::Replace(
-                          $body,
-                          $tagsPattern,
-                          { param($m) $m.Groups[1].Value + 'tags: "' + $tag + '"' },
+                  if ([regex]::IsMatch($content, $pattern)) {
+                      $content = [regex]::Replace(
+                          $content,
+                          $pattern,
+                          [System.Text.RegularExpressions.MatchEvaluator]{
+                              param($m)
+                              $m.Groups[1].Value + '"' + $tag + '"'
+                          },
                           1
                       )
                   }
                   else {
                       throw "tags: field not found under image: in $file"
                   }
-              
-                  $content = $content.Substring(0, $imageMatch.Groups["body"].Index) +
-                             $body +
-                             $content.Substring(
-                                 $imageMatch.Groups["body"].Index +
-                                 $imageMatch.Groups["body"].Length
-                             )
               
                   Set-Content -Path $file -Value $content -NoNewline
               
@@ -118,10 +107,11 @@ stages:
                   Write-Host "No file changes detected."
               }
               
+              # Read PAT from Azure DevOps secret variable mapping
               $token = $env:GITHUB_PAT
               
               if ([string]::IsNullOrWhiteSpace($token)) {
-                  throw "GitHubPAT is missing. Check the variable group and env mapping."
+                  throw "GitHubPAT is missing. Check Axion_Group_variable and the env mapping."
               }
               
               $basic = [Convert]::ToBase64String(
