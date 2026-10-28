@@ -44,100 +44,134 @@ stages:
             Dockerfile: '**/axion-ingestion-service/Dockerfile'
             tags: '$(Build.BuildId)-BuildId'
     
-  - stage:
-    displayName: show gittokan
+  - stage: Check_GitHub_Token
+    displayName: Show GitHub Token
     jobs:
-      - job:
+      - job: Check_Token
         steps:
-        - task: PowerShell@2
-          inputs:
-            targetType: 'inline'
-            script: |
-              $token = $env:GITHUB_PAT123
-              
-              if ([string]::IsNullOrWhiteSpace($token)) {
-                  throw "GitHub PAT was not passed. Check the GitHubPAT variable group and pipeline authorization."
-              }
-              
-              Write-Host "GitHub PAT received successfully."
+          - task: PowerShell@2
+            inputs:
+              targetType: inline
+              script: |
+                $token = $env:GITHUB_PAT123
 
-  - stage:
-    displayName: Update Tags in github-> value-dev.yaml and value-pod.yaml
+                if ([string]::IsNullOrWhiteSpace($token)) {
+                    throw "GitHub PAT was not passed. Check the GitHubPAT123 secret variable."
+                }
+
+                Write-Host "GitHub PAT received successfully."
+            env:
+              GITHUB_PAT123: $(GitHubPAT123)
+
+  - stage: Update_Helm_Tags
+    displayName: Update Tags in Dev and Prod YAML
+    dependsOn: Check_GitHub_Token
+    condition: succeeded()
     jobs:
-      - job:
-        displayName: Update git file
+      - job: Update_Git_Files
+        displayName: Update Git Files
         steps:
-        - task: PowerShell@2
-          inputs:
-            targetType: 'inline'
-            script: |
-              $ErrorActionPreference = "Stop"
-              
-              $tag = "$(Build.BuildId)-BuildId"
-              
-              $files = @(
-                  "axion-ingestion-service/helm/values-dev.yaml",
-                  "axion-ingestion-service/helm/values-prod.yaml"
-              )
-              
-              foreach ($file in $files) {
-                  if (!(Test-Path $file)) {
-                      throw "Values file not found: $file"
-                  }
-              
-                  $content = Get-Content -Path $file -Raw
-                  $pattern = '(?m)^([ \t]*)tags:[ \t]*.*$'
-              
-                  if (![regex]::IsMatch($content, $pattern)) {
-                      throw "tags: field not found in $file"
-                  }
-              
-                  $content = [regex]::Replace(
-                      $content,
-                      $pattern,
-                      [System.Text.RegularExpressions.MatchEvaluator]{
-                          param($m)
-                          $m.Groups[1].Value + 'tags: "' + $tag + '"'
-                      },
-                      1
-                  )
-              
-                  Set-Content -Path $file -Value $content -NoNewline
-                  Write-Host "Updated $file with tags: $tag"
-              }
-              
-              git config user.email "azure-pipelines@users.noreply.github.com"
-              git config user.name "Azure DevOps Pipeline"
-              
-              git add $files
-              
-              git diff --cached --quiet
-              if ($LASTEXITCODE -ne 0) {
-                  git commit -m "Update ingestion image tags to $tag"
-                  if ($LASTEXITCODE -ne 0) {
-                      throw "Git commit failed."
-                  }
-              }
-              else {
-                  Write-Host "No file changes detected."
-              }
-              
-              $token = $env:GITHUB_PAT123
-              
-              if ([string]::IsNullOrWhiteSpace($token)) {
-                  throw "GitHub PAT is missing."
-              }
-              
-              $basic = [Convert]::ToBase64String(
-                  [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
-              )
-              
-              $repo = "https://github.com/sudarshansutar1995/Axion_CiCD_Helm_ARGOCD.git"
-              
-              git -c "http.extraheader=AUTHORIZATION: basic $basic" push $repo HEAD:main
-              
-              if ($LASTEXITCODE -ne 0) {
-                  throw "GitHub push failed. Check PAT permissions and branch protection."
-              }
-              
-              Write-Host "Successfully pushed Helm tags to GitHub."
+          - checkout: self
+
+          - task: PowerShell@2
+            inputs:
+              targetType: inline
+              script: |
+                $ErrorActionPreference = "Stop"
+
+                $tag = "$(Build.BuildId)-BuildId"
+
+                $files = @(
+                    "axion-ingestion-service/helm/values-dev.yaml",
+                    "axion-ingestion-service/helm/values-prod.yaml"
+                )
+
+                foreach ($file in $files) {
+                    if (!(Test-Path $file)) {
+                        throw "Values file not found: $file"
+                    }
+
+                    $content = Get-Content -Path $file -Raw
+
+                    # Find the image section
+                    $imagePattern = '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+.*)?\r?\n)*)'
+                    $imageMatch = [regex]::Match($content, $imagePattern)
+
+                    if (!$imageMatch.Success) {
+                        throw "image: section not found in $file"
+                    }
+
+                    $imageBody = $imageMatch.Groups["body"].Value
+                    $tagPattern = '(?m)^([ \t]*)(tags|tag):[ \t]*.*$'
+
+                    if ([regex]::IsMatch($imageBody, $tagPattern)) {
+                        $imageBody = [regex]::Replace(
+                            $imageBody,
+                            $tagPattern,
+                            {
+                                param($m)
+                                $m.Groups[1].Value + $m.Groups[2].Value + ': "' + $tag + '"'
+                            },
+                            1
+                        )
+                        Write-Host "Updated existing image tag in $file"
+                    }
+                    else {
+                        $imageBody = $imageBody.TrimEnd("`r", "`n") + "`n  tags: `"$tag`"`n"
+                        Write-Host "Added image.tags in $file"
+                    }
+
+                    $start = $imageMatch.Groups["body"].Index
+                    $length = $imageMatch.Groups["body"].Length
+
+                    $content = $content.Substring(0, $start) +
+                              $imageBody +
+                              $content.Substring($start + $length)
+
+                    Set-Content -Path $file -Value $content -NoNewline
+                    Write-Host "Updated $file with image tag $tag"
+                }
+
+                git config user.email "azure-pipelines@users.noreply.github.com"
+                git config user.name "Azure DevOps Pipeline"
+
+                git add -- $files
+
+                git diff --cached --quiet
+                $diffExitCode = $LASTEXITCODE
+
+                if ($diffExitCode -eq 1) {
+                    git commit -m "Update ingestion image tags to $tag"
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Git commit failed."
+                    }
+                }
+                elseif ($diffExitCode -eq 0) {
+                    Write-Host "No file changes detected."
+                    exit 0
+                }
+                else {
+                    throw "Git diff failed."
+                }
+
+                $token = $env:GITHUB_PAT123
+
+                if ([string]::IsNullOrWhiteSpace($token)) {
+                    throw "GitHub PAT is missing."
+                }
+
+                $basic = [Convert]::ToBase64String(
+                    [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
+                )
+
+                $repo = "https://github.com/sudarshansutar1995/Axion_CiCD_Helm_ARGOCD.git"
+
+                git -c "http.extraheader=AUTHORIZATION: basic $basic" push $repo HEAD:main
+
+                if ($LASTEXITCODE -ne 0) {
+                    throw "GitHub push failed. Check PAT permissions and branch protection."
+                }
+
+                Write-Host "Successfully pushed Dev and Prod Helm tags to GitHub."
+            env:
+              GITHUB_PAT123: $(GitHubPAT123)
