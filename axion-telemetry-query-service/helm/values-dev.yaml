@@ -8,7 +8,7 @@ ports:
 
 image: 
  repositary: sudarshanacr.azurecr.io/axion-telemetary-service
- tags: 101
+ tags: "177-BuildId"
  
 
 secretKeyRef:
