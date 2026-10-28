@@ -69,21 +69,40 @@ stages:
                   }
               
                   $content = Get-Content $file -Raw
-                  $pattern = '(?m)^([ \t]*tags:[ \t]*)[^\r\n]*$'
               
-                  if (-not [regex]::IsMatch($content, $pattern)) {
-                      throw "Could not find tags field in $file"
+                  # Update existing tags: or tag: field
+                  $pattern = '(?m)^([ \t]*)(tags|tag):[ \t]*.*$'
+              
+                  if ([regex]::IsMatch($content, $pattern)) {
+                      $content = [regex]::Replace(
+                          $content,
+                          $pattern,
+                          { param($m) $m.Groups[1].Value + $m.Groups[2].Value + ': "' + $tag + '"' },
+                          1
+                      )
+                      Write-Host "Updated existing tag field in $file"
+                  }
+                  else {
+                      # Add tag under image: if the field is missing
+                      $imagePattern = '(?m)^([ \t]*)image:[ \t]*$'
+              
+                      if ([regex]::IsMatch($content, $imagePattern)) {
+                          $content = [regex]::Replace(
+                              $content,
+                              $imagePattern,
+                              { param($m) $m.Value + "`n" + $m.Groups[1].Value + '  tag: "' + $tag + '"' },
+                              1
+                          )
+                      }
+                      else {
+                          # Create an image section if it does not exist
+                          $content = $content.TrimEnd() + "`nimage:`n  tag: `"$tag`"`n"
+                      }
+              
+                      Write-Host "Added tag field in $file"
                   }
               
-                  $content = [regex]::Replace(
-                      $content,
-                      $pattern,
-                      { param($m) $m.Groups[1].Value + '"' + $tag + '"' },
-                      1
-                  )
-              
                   Set-Content -Path $file -Value $content -NoNewline
-                  Write-Host "Updated $file with image tag $tag"
               }
               
               git config user.name "Azure DevOps"
