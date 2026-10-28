@@ -1,6 +1,6 @@
 image: 
     repositary : sudarshanacr.azurecr.io/axion-data-simulator 
-    tags: 104 
+    tags: "182-BuildId"
   
 secretKeyRef:
     secret_name: simulator-secret
