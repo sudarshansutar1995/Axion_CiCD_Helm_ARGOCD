@@ -70,43 +70,70 @@ stages:
               
                   $content = Get-Content $file -Raw
               
-                  # Find the image section
-                  $imageMatch = [regex]::Match(
-                      $content,
-                      '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+.*)?\r?\n)*)'
-                  )
+                  $imagePattern = '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+[^\r\n]*)?\r?\n)*)'
+                  $imageMatch = [regex]::Match($content, $imagePattern)
               
-                  if ($imageMatch.Success) {
-                      $imageBody = $imageMatch.Groups["body"].Value
+                  if (!$imageMatch.Success) {
+                      throw "Top-level image section not found in $file"
+                  }
               
-                      # Update tag/tags if present under image:
-                      $tagPattern = '(?m)^([ \t]+)(tags|tag):[ \t]*.*$'
+                  $body = $imageMatch.Groups["body"].Value
+                  $tagsPattern = '(?m)^([ \t]+)tags:[ \t]*.*$'
               
-                      if ([regex]::IsMatch($imageBody, $tagPattern)) {
-                          $imageBody = [regex]::Replace(
-                              $imageBody,
-                              $tagPattern,
-                              { param($m) $m.Groups[1].Value + $m.Groups[2].Value + ': "' + $tag + '"' },
-                              1
-                          )
-              
-                          Write-Host "Updated image tag in $file"
-                      }
-                      else {
-                          # Add tag under image: if missing
-                          $imageBody = $imageBody.TrimEnd("`r", "`n") + "`n  tag: `"$tag`"`n"
-                          Write-Host "Added image.tag in $file"
-                      }
-              
-                      $content = $content.Substring(0, $imageMatch.Groups["body"].Index) +
-                                 $imageBody +
-                                 $content.Substring($imageMatch.Groups["body"].Index + $imageMatch.Groups["body"].Length)
+                  if ([regex]::IsMatch($body, $tagsPattern)) {
+                      $body = [regex]::Replace(
+                          $body,
+                          $tagsPattern,
+                          { param($m) $m.Groups[1].Value + 'tags: "' + $tag + '"' },
+                          1
+                      )
                   }
                   else {
-                      # Create image section if it does not exist
-                      $content = $content.TrimEnd() + "`nimage:`n  tag: `"$tag`"`n"
-                      Write-Host "Created image section in $file"
+                      throw "tags: field not found under image: in $file"
                   }
               
+                  $content = $content.Substring(0, $imageMatch.Groups["body"].Index) +
+                             $body +
+                             $content.Substring(
+                                 $imageMatch.Groups["body"].Index +
+                                 $imageMatch.Groups["body"].Length
+                             )
+              
                   Set-Content -Path $file -Value $content -NoNewline
+              
+                  Write-Host "Updated $file with tags: $tag"
+                  Get-Content $file
               }
+              
+              git config user.email "azure-pipelines@users.noreply.github.com"
+              git config user.name "Azure DevOps Pipeline"
+              
+              git add $files
+              
+              git diff --cached --quiet
+              if ($LASTEXITCODE -ne 0) {
+                  git commit -m "Update ingestion image tags to $tag"
+              }
+              else {
+                  Write-Host "No file changes detected."
+              }
+              
+              $token = $env:GITHUB_PAT
+              
+              if ([string]::IsNullOrWhiteSpace($token)) {
+                  throw "GitHubPAT is missing. Check the variable group and env mapping."
+              }
+              
+              $basic = [Convert]::ToBase64String(
+                  [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
+              )
+              
+              $repo = "https://github.com/sudarshansutar1995/Axion_CiCD_Helm_ARGOCD.git"
+              
+              git -c "http.extraheader=AUTHORIZATION: basic $basic" push $repo HEAD:main
+              
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Failed to push Helm values to GitHub."
+              }
+              
+              Write-Host "Successfully pushed Helm tags to GitHub."
