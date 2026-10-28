@@ -19,7 +19,7 @@ ports:
   port: 80
 
 image:
-  repository: sudarshanacr.azurecr.io/axion-ui
+  repository: sudarshan.azurecr.io/axion-ui
   tags: "179-BuildId"
 
 metadata:
