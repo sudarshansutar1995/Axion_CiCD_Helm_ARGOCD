@@ -20,7 +20,7 @@ ports:
 
 image:
   repository: sudarshanacr.azurecr.io/axion-ui
-  tags: latest
+  tags: "179-BuildId"
 
 metadata:
   name: axion-ui
