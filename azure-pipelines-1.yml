@@ -43,7 +43,30 @@ stages:
             command: 'buildAndPush'
             Dockerfile: '**/axion-ingestion-service/Dockerfile'
             tags: '$(Build.BuildId)-BuildId'
-        
+    
+  - stage:
+    displayName: show gittokan
+    jobs:
+      - job:
+        steps:
+        - task: PowerShell@2
+          inputs:
+            targetType: 'inline'
+            script: |
+              - task: PowerShell@2
+                        inputs:
+                          targetType: inline
+                          script: |
+                            $token = $env:GITHUB_PAT
+              
+                            if ([string]::IsNullOrWhiteSpace($token)) {
+                                throw "GitHub PAT was not passed to the script."
+                            }
+              
+                            Write-Host "GitHub PAT received successfully."
+                        env:
+                          GITHUB_PAT: $(GitHubPAT)
+
   - stage:
     displayName: Update Tags in github-> value-dev.yaml and value-pod.yaml
     jobs:
