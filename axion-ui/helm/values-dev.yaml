@@ -1,7 +1,7 @@
 
 app: axion-ui
 
-replicaCount: 2
+replicaCount: 4
 
 ingress:
   enabled: true
