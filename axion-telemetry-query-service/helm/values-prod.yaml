@@ -7,7 +7,7 @@ ports:
   port: 80
 
 image: 
- repositary: sudarshanacr.azurecr.io/axion-telemetary-service
+ repositary: sudarshan.azurecr.io/axion-telemetary-service
  tags: "177-BuildId"
  
 
