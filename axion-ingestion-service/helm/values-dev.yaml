@@ -8,8 +8,7 @@ ports:
 
 image: 
  repositary: sudarshanacr.azurecr.io/axion-ingestion
- tags:"174-BuildId"
-
+ tags: "174-BuildId"
 
 secretKeyRef:
   name: ingestion-secret
