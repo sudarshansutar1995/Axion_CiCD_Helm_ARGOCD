@@ -1,5 +1,5 @@
 
-pool: axion-agent
+pool: default
 
 trigger:
   - none
@@ -25,7 +25,7 @@ parameters:
   - prod
 
 variables:
-- group: Axion-Project_helm
+- group: Axion_Group_variable
 
 stages:
 
