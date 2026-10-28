@@ -56,7 +56,7 @@ stages:
               $token = $env:GITHUB_PAT
               
               if ([string]::IsNullOrWhiteSpace($token)) {
-                  throw "GitHub PAT was not passed to the script. Check the GitHubPAT variable group and pipeline authorization."
+                  throw "GitHub PAT was not passed. Check the GitHubPAT variable group and pipeline authorization."
               }
               
               Write-Host "GitHub PAT received successfully."
@@ -86,29 +86,24 @@ stages:
                   }
               
                   $content = Get-Content -Path $file -Raw
+                  $pattern = '(?m)^([ \t]*)tags:[ \t]*.*$'
               
-                  # Update only tags: under the image: section
-                  $pattern = '(?ms)(^image:[ \t]*\r?\n(?:(?!^\S)[^\r\n]*\r?\n)*?[ \t]+tags:[ \t]*).*$'
+                  if (![regex]::IsMatch($content, $pattern)) {
+                      throw "tags: field not found in $file"
+                  }
               
-                  if ([regex]::IsMatch($content, $pattern)) {
-                      $content = [regex]::Replace(
-                          $content,
-                          $pattern,
-                          [System.Text.RegularExpressions.MatchEvaluator]{
-                              param($m)
-                              $m.Groups[1].Value + '"' + $tag + '"'
-                          },
-                          1
-                      )
-                  }
-                  else {
-                      throw "tags: field not found under image: in $file"
-                  }
+                  $content = [regex]::Replace(
+                      $content,
+                      $pattern,
+                      [System.Text.RegularExpressions.MatchEvaluator]{
+                          param($m)
+                          $m.Groups[1].Value + 'tags: "' + $tag + '"'
+                      },
+                      1
+                  )
               
                   Set-Content -Path $file -Value $content -NoNewline
-              
                   Write-Host "Updated $file with tags: $tag"
-                  Get-Content $file
               }
               
               git config user.email "azure-pipelines@users.noreply.github.com"
@@ -119,16 +114,18 @@ stages:
               git diff --cached --quiet
               if ($LASTEXITCODE -ne 0) {
                   git commit -m "Update ingestion image tags to $tag"
+                  if ($LASTEXITCODE -ne 0) {
+                      throw "Git commit failed."
+                  }
               }
               else {
                   Write-Host "No file changes detected."
               }
               
-              # Read PAT from Azure DevOps secret variable mapping
               $token = $env:GITHUB_PAT
               
               if ([string]::IsNullOrWhiteSpace($token)) {
-                  throw "GitHubPAT is missing. Check Axion_Group_variable and the env mapping."
+                  throw "GitHub PAT is missing."
               }
               
               $basic = [Convert]::ToBase64String(
@@ -140,7 +137,7 @@ stages:
               git -c "http.extraheader=AUTHORIZATION: basic $basic" push $repo HEAD:main
               
               if ($LASTEXITCODE -ne 0) {
-                  throw "Failed to push Helm values to GitHub."
+                  throw "GitHub push failed. Check PAT permissions and branch protection."
               }
               
               Write-Host "Successfully pushed Helm tags to GitHub."
