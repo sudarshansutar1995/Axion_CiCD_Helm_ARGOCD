@@ -56,60 +56,45 @@ stages:
 
       - task: PowerShell@2
         displayName: Update Helm Tags and Push to Azure Repos
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
         inputs:
           targetType: inline
           script: |
             $ErrorActionPreference = "Stop"
-
             $tag = "$(Build.BuildId)-BuildId"
-            $repo = "https://sudarshansutar100@dev.azure.com/sudarshansutar100/axion-argocd/_git/Axion_CiCD_Helm_ARGOCD"
 
             $files = @(
-                "axion-ingestion-service/helm/values-dev.yaml",
-                "axion-ingestion-service/helm/values-prod.yaml"
+              "axion-ingestion-service/helm/values-dev.yaml",
+              "axion-ingestion-service/helm/values-prod.yaml"
             )
 
             foreach ($file in $files) {
-                if (!(Test-Path $file)) {
-                    throw "Values file not found: $file"
-                }
+              if (!(Test-Path $file)) {
+                throw "File not found: $file"
+              }
 
-                $content = Get-Content -Path $file -Raw
-                $imagePattern = '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+.*)?\r?\n)*)'
-                $imageMatch = [regex]::Match($content, $imagePattern)
+              $content = Get-Content $file -Raw
 
-                if (!$imageMatch.Success) {
-                    throw "image: section not found in $file"
-                }
+              $pattern = '(?ms)(^image:\s*\r?\n(?:(?:[ \t]+.*)?\r?\n)*?[ \t]+(?:tag|tags):\s*)[^\r\n]*'
 
-                $imageBody = $imageMatch.Groups["body"].Value
-                $tagPattern = '(?m)^([ \t]*)(tags|tag):[ \t]*.*$'
+              if ([regex]::IsMatch($content, $pattern)) {
+                $content = [regex]::Replace(
+                  $content,
+                  $pattern,
+                  [System.Text.RegularExpressions.MatchEvaluator]{
+                    param($m)
+                    $m.Groups[1].Value + '"' + $tag + '"'
+                  },
+                  1
+                )
+              }
+              else {
+                throw "Could not find tag/tags under image in $file. Check the YAML structure."
+              }
 
-                if ([regex]::IsMatch($imageBody, $tagPattern)) {
-                    $imageBody = [regex]::Replace(
-                        $imageBody,
-                        $tagPattern,
-                        [System.Text.RegularExpressions.MatchEvaluator]{
-                            param($m)
-                            $m.Groups[1].Value + $m.Groups[2].Value + ': "' + $tag + '"'
-                        },
-                        1
-                    )
-                }
-                else {
-                    $imageBody = $imageBody.TrimEnd("`r", "`n") +
-                        "`n  tags: `"$tag`"`n"
-                }
-
-                $start = $imageMatch.Groups["body"].Index
-                $length = $imageMatch.Groups["body"].Length
-
-                $content = $content.Substring(0, $start) +
-                          $imageBody +
-                          $content.Substring($start + $length)
-
-                Set-Content -Path $file -Value $content -NoNewline
-                Write-Host "Updated $file with tag $tag"
+              Set-Content -Path $file -Value $content -NoNewline
+              Write-Host "Updated $file to tag $tag"
             }
 
             git config user.email "azure-pipelines@users.noreply.github.com"
@@ -117,29 +102,31 @@ stages:
 
             git add -- $files
             if ($LASTEXITCODE -ne 0) {
-                throw "Git add failed."
+              throw "Git add failed"
             }
 
             git diff --cached --quiet
             $diffExitCode = $LASTEXITCODE
 
             if ($diffExitCode -eq 0) {
-                Write-Host "No Helm file changes detected."
-                exit 0
+              Write-Host "No changes to commit."
+              exit 0
             }
 
             if ($diffExitCode -ne 1) {
-                throw "Git diff failed."
+              throw "Git diff failed"
             }
 
             git commit -m "Update ingestion image tag to $tag"
             if ($LASTEXITCODE -ne 0) {
-                throw "Git commit failed."
+              throw "Git commit failed"
             }
 
-            git push $repo HEAD:refs/heads/main
+            git -c http.extraheader="AUTHORIZATION: bearer $env:SYSTEM_ACCESSTOKEN" `
+              push origin HEAD:refs/heads/main
+
             if ($LASTEXITCODE -ne 0) {
-                throw "Azure Repos push failed. Check Build Service permissions and branch policies."
+              throw "Push failed. Verify repository access, Contribute permission, and main branch policies."
             }
 
-            Write-Host "Successfully updated Helm tags in Azure Repos."
+            Write-Host "Helm tags successfully pushed to Azure Repos."
