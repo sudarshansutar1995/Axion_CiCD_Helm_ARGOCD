@@ -54,83 +54,76 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              - task: PowerShell@2
-                        displayName: Update Dev and Prod Helm Image Tags
-                        inputs:
-                          targetType: inline
-                          script: |
-                            $ErrorActionPreference = "Stop"
+              $ErrorActionPreference = "Stop"
               
-                            $tag = "$(Build.BuildId)-BuildId"
+              $tag = "$(Build.BuildId)-BuildId"
               
-                            $files = @(
-                              "axion-ingestion-service/helm/values-dev.yaml",
-                              "axion-ingestion-service/helm/values-prod.yaml"
-                            )
+              $files = @(
+                  "axion-ingestion-service/helm/values-dev.yaml",
+                  "axion-ingestion-service/helm/values-prod.yaml"
+              )
               
-                            foreach ($file in $files) {
-                              if (!(Test-Path $file)) {
-                                throw "Values file not found: $file"
-                              }
+              foreach ($file in $files) {
+                  if (!(Test-Path $file)) {
+                      throw "Values file not found: $file"
+                  }
               
-                              $content = Get-Content $file -Raw
+                  $content = Get-Content $file -Raw
+                  $pattern = '(?m)^([ \t]*tags:[ \t]*)[^\r\n]*$'
               
-                              $pattern = '(?m)^([ \t]*tags:[ \t]*)[^\r\n]*$'
+                  if (-not [regex]::IsMatch($content, $pattern)) {
+                      throw "Could not find tags field in $file"
+                  }
               
-                              if (-not [regex]::IsMatch($content, $pattern)) {
-                                throw "Could not find tags field in $file"
-                              }
+                  $content = [regex]::Replace(
+                      $content,
+                      $pattern,
+                      { param($m) $m.Groups[1].Value + '"' + $tag + '"' },
+                      1
+                  )
               
-                              $content = [regex]::Replace(
-                                $content,
-                                $pattern,
-                                { param($m) $m.Groups[1].Value + '"' + $tag + '"' },
-                                1
-                              )
+                  Set-Content -Path $file -Value $content -NoNewline
+                  Write-Host "Updated $file with image tag $tag"
+              }
               
-                              Set-Content -Path $file -Value $content -NoNewline
+              git config user.name "Azure DevOps"
+              git config user.email "azure-pipelines@local"
               
-                              Write-Host "Updated $file with image tag $tag"
-                            }
+              git add -- $files
+              git diff --cached --quiet
+              $diffExitCode = $LASTEXITCODE
               
-                            git config user.name "Azure DevOps"
-                            git config user.email "azure-pipelines@local"
+              if ($diffExitCode -eq 0) {
+                  Write-Host "No changes to commit."
+                  exit 0
+              }
               
-                            git add $files
-                            git diff --cached --quiet
+              if ($diffExitCode -ne 1) {
+                  throw "Failed to check Git changes."
+              }
               
-                            if ($LASTEXITCODE -eq 0) {
-                              Write-Host "No changes to commit."
-                              exit 0
-                            }
+              git commit -m "Update ingestion image tag to $tag"
               
-                            git commit -m "Update ingestion image tag to $tag"
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Git commit failed."
+              }
               
-                            if ($LASTEXITCODE -ne 0) {
-                              throw "Git commit failed."
-                            }
+              $token = $env:GITHUB_PAT
               
-                            $token = $env:GITHUB_PAT
+              if ([string]::IsNullOrWhiteSpace($token)) {
+                  throw "GitHubPAT secret variable is missing."
+              }
               
-                            if ([string]::IsNullOrWhiteSpace($token)) {
-                              throw "GitHubPAT secret variable is missing."
-                            }
+              $basic = [Convert]::ToBase64String(
+                  [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
+              )
               
-                            $basic = [Convert]::ToBase64String(
-                              [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
-                            )
+              $githubRepo = "https://github.com/sudarshansutar1995/Axion_CiCD_Helm_ARGOCD.git"
               
-                            git -c "http.extraheader=AUTHORIZATION: basic $basic" push origin HEAD:main
+              git -c "http.extraheader=AUTHORIZATION: basic $basic" push $githubRepo HEAD:main
               
-                            if ($LASTEXITCODE -ne 0) {
-                              throw "Git push failed."
-                            }
+              if ($LASTEXITCODE -ne 0) {
+                  throw "GitHub push failed."
+              }
               
-                            Write-Host "Dev and Prod image tags updated and pushed successfully."
-                        env:
-                          GITHUB_PAT: $(GitHubPAT)
-        
-
-        
-
-        
+              Write-Host "Dev and Prod image tags updated and pushed successfully."
