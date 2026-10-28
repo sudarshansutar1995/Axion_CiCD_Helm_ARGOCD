@@ -8,4 +8,4 @@ metadata:
 type: Opaque
 
 stringData:
-  DATABASE_URL: "postgresql://sudarshan:Akkalkot%40413216@postgresdb.postgres.database.azure.com:5432/axion-db?sslmode=require"
+  DATABASE_URL: "postgresql://sudarshan:Akkalkot%40413216@axion-postgressdb.postgres.database.azure.com:5432/axion-db?sslmode=require"
