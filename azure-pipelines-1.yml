@@ -1,4 +1,4 @@
-pool: axion-agent
+pool: default
 
 trigger:
   - none
@@ -25,7 +25,7 @@ parameters:
 
 
 variables:
-- group: Axion-Project_helm
+- group: Axion_Group_variable
 
 
 stages:
@@ -44,31 +44,92 @@ stages:
             Dockerfile: '**/axion-ingestion-service/Dockerfile'
             tags: '$(Build.BuildId)-BuildId'
         
-      
-  
-  - stage: 
-    displayName: Helm_deploy_to_cluster
-    condition: eq('${{ parameters.Kubernate_secrer }}', 'true')
+  - stage:
+    displayName: Update Tags in github-> value-dev.yaml and value-pod.yaml
     jobs:
-      - job: 
-        displayName: Helm_deploy_to_cluster
+      - job:
+        displayName: Update git file
         steps:
-        - task: HelmDeploy@1
+        - task: PowerShell@2
           inputs:
-            connectionType: 'Azure Resource Manager'
-            azureSubscription: 'axion-helm-project'
-            azureResourceGroup: 'rg_sudarshan'
-            kubernetesCluster: 'kub-sudarshan'
-            namespace: '${{ parameters.Namespace_Environment }}'
-            command: 'upgrade'
-            chartType: 'FilePath'
-            chartPath: 'axion-ingestion-service/helm'
-            releaseName: 'axion-ingestion'
-            valueFile: 'axion-ingestion-service/helm/values-${{ parameters.Namespace_Environment }}.yaml'
-            install: true
-            waitForExecution: false
-            arguments: '--create-namespace --set image.tags=$(Build.BuildId)-BuildId'
-
+            targetType: 'inline'
+            script: |
+              - task: PowerShell@2
+                        displayName: Update Dev and Prod Helm Image Tags
+                        inputs:
+                          targetType: inline
+                          script: |
+                            $ErrorActionPreference = "Stop"
+              
+                            $tag = "$(Build.BuildId)-BuildId"
+              
+                            $files = @(
+                              "axion-ingestion-service/helm/values-dev.yaml",
+                              "axion-ingestion-service/helm/values-prod.yaml"
+                            )
+              
+                            foreach ($file in $files) {
+                              if (!(Test-Path $file)) {
+                                throw "Values file not found: $file"
+                              }
+              
+                              $content = Get-Content $file -Raw
+              
+                              $pattern = '(?m)^([ \t]*tags:[ \t]*)[^\r\n]*$'
+              
+                              if (-not [regex]::IsMatch($content, $pattern)) {
+                                throw "Could not find tags field in $file"
+                              }
+              
+                              $content = [regex]::Replace(
+                                $content,
+                                $pattern,
+                                { param($m) $m.Groups[1].Value + '"' + $tag + '"' },
+                                1
+                              )
+              
+                              Set-Content -Path $file -Value $content -NoNewline
+              
+                              Write-Host "Updated $file with image tag $tag"
+                            }
+              
+                            git config user.name "Azure DevOps"
+                            git config user.email "azure-pipelines@local"
+              
+                            git add $files
+                            git diff --cached --quiet
+              
+                            if ($LASTEXITCODE -eq 0) {
+                              Write-Host "No changes to commit."
+                              exit 0
+                            }
+              
+                            git commit -m "Update ingestion image tag to $tag"
+              
+                            if ($LASTEXITCODE -ne 0) {
+                              throw "Git commit failed."
+                            }
+              
+                            $token = $env:GITHUB_PAT
+              
+                            if ([string]::IsNullOrWhiteSpace($token)) {
+                              throw "GitHubPAT secret variable is missing."
+                            }
+              
+                            $basic = [Convert]::ToBase64String(
+                              [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
+                            )
+              
+                            git -c "http.extraheader=AUTHORIZATION: basic $basic" push origin HEAD:main
+              
+                            if ($LASTEXITCODE -ne 0) {
+                              throw "Git push failed."
+                            }
+              
+                            Write-Host "Dev and Prod image tags updated and pushed successfully."
+                        env:
+                          GITHUB_PAT: $(GitHubPAT)
+        
 
         
 
