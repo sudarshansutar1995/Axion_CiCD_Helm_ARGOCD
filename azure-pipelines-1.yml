@@ -63,115 +63,121 @@ stages:
             env:
               GITHUB_PAT123: $(GitHubPAT123)
 
+  
   - stage: Update_Helm_Tags
     displayName: Update Tags in Dev and Prod YAML
     dependsOn: Check_GitHub_Token
     condition: succeeded()
     jobs:
-      - job: Update_Git_Files
-        displayName: Update Git Files
-        steps:
-          - checkout: self
+    - job: Update_Git_Files
+      displayName: Update Git Files
+      steps:
+      - checkout: self
 
-          - task: PowerShell@2
-            inputs:
-              targetType: inline
-              script: |
-                $ErrorActionPreference = "Stop"
+      - task: PowerShell@2
+        displayName: Update Helm Tags and Push to GitHub
+        inputs:
+          targetType: inline
+          script: |
+            $ErrorActionPreference = "Stop"
 
-                $tag = "$(Build.BuildId)-BuildId"
+            $tag = "$(Build.BuildId)-BuildId"
 
-                $files = @(
-                    "axion-ingestion-service/helm/values-dev.yaml",
-                    "axion-ingestion-service/helm/values-prod.yaml"
-                )
+            $files = @(
+                "axion-ingestion-service/helm/values-dev.yaml",
+                "axion-ingestion-service/helm/values-prod.yaml"
+            )
 
-                foreach ($file in $files) {
-                    if (!(Test-Path $file)) {
-                        throw "Values file not found: $file"
-                    }
-
-                    $content = Get-Content -Path $file -Raw
-
-                    # Find the image section
-                    $imagePattern = '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+.*)?\r?\n)*)'
-                    $imageMatch = [regex]::Match($content, $imagePattern)
-
-                    if (!$imageMatch.Success) {
-                        throw "image: section not found in $file"
-                    }
-
-                    $imageBody = $imageMatch.Groups["body"].Value
-                    $tagPattern = '(?m)^([ \t]*)(tags|tag):[ \t]*.*$'
-
-                    if ([regex]::IsMatch($imageBody, $tagPattern)) {
-                        $imageBody = [regex]::Replace(
-                            $imageBody,
-                            $tagPattern,
-                            {
-                                param($m)
-                                $m.Groups[1].Value + $m.Groups[2].Value + ': "' + $tag + '"'
-                            },
-                            1
-                        )
-                        Write-Host "Updated existing image tag in $file"
-                    }
-                    else {
-                        $imageBody = $imageBody.TrimEnd("`r", "`n") + "`n  tags: `"$tag`"`n"
-                        Write-Host "Added image.tags in $file"
-                    }
-
-                    $start = $imageMatch.Groups["body"].Index
-                    $length = $imageMatch.Groups["body"].Length
-
-                    $content = $content.Substring(0, $start) +
-                              $imageBody +
-                              $content.Substring($start + $length)
-
-                    Set-Content -Path $file -Value $content -NoNewline
-                    Write-Host "Updated $file with image tag $tag"
+            foreach ($file in $files) {
+                if (!(Test-Path $file)) {
+                    throw "Values file not found: $file"
                 }
 
-                git config user.email "azure-pipelines@users.noreply.github.com"
-                git config user.name "Azure DevOps Pipeline"
+                $content = Get-Content -Path $file -Raw
 
-                git add -- $files
+                # Find the image section
+                $imagePattern = '(?ms)^image:[ \t]*\r?\n(?<body>(?:(?:[ \t]+.*)?\r?\n)*)'
+                $imageMatch = [regex]::Match($content, $imagePattern)
 
-                git diff --cached --quiet
-                $diffExitCode = $LASTEXITCODE
-
-                if ($diffExitCode -eq 1) {
-                    git commit -m "Update ingestion image tags to $tag"
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Git commit failed."
-                    }
+                if (!$imageMatch.Success) {
+                    throw "image: section not found in $file"
                 }
-                elseif ($diffExitCode -eq 0) {
-                    Write-Host "No file changes detected."
-                    exit 0
+
+                $imageBody = $imageMatch.Groups["body"].Value
+                $tagPattern = '(?m)^([ \t]*)(tags|tag):[ \t]*.*$'
+
+                if ([regex]::IsMatch($imageBody, $tagPattern)) {
+                    $imageBody = [regex]::Replace(
+                        $imageBody,
+                        $tagPattern,
+                        [System.Text.RegularExpressions.MatchEvaluator]{
+                            param($m)
+                            $m.Groups[1].Value + $m.Groups[2].Value + ': "' + $tag + '"'
+                        },
+                        1
+                    )
                 }
                 else {
-                    throw "Git diff failed."
+                    $imageBody = $imageBody.TrimEnd("`r", "`n") + "`n  tags: `"$tag`"`n"
                 }
 
-                $token = $env:GITHUB_PAT123
+                $start = $imageMatch.Groups["body"].Index
+                $length = $imageMatch.Groups["body"].Length
 
-                if ([string]::IsNullOrWhiteSpace($token)) {
-                    throw "GitHub PAT is missing."
-                }
+                $content = $content.Substring(0, $start) +
+                          $imageBody +
+                          $content.Substring($start + $length)
 
-                $basic = [Convert]::ToBase64String(
-                    [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
-                )
+                Set-Content -Path $file -Value $content -NoNewline
+                Write-Host "Updated $file with image tag $tag"
+            }
 
-                $repo = "https://github.com/sudarshansutar1995/Axion_CiCD_Helm_ARGOCD.git"
+            # Configure Git identity
+            git config user.email "azure-pipelines@users.noreply.github.com"
+            git config user.name "Azure DevOps Pipeline"
 
-                git -c "http.extraheader=AUTHORIZATION: basic $basic" push $repo HEAD:main
+            git add -- $files
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git add failed."
+            }
 
+            git diff --cached --quiet
+            $diffExitCode = $LASTEXITCODE
+
+            if ($diffExitCode -eq 1) {
+                git commit -m "Update ingestion image tags to $tag"
                 if ($LASTEXITCODE -ne 0) {
-                    throw "GitHub push failed. Check PAT permissions and branch protection."
+                    throw "Git commit failed."
                 }
+            }
+            elseif ($diffExitCode -eq 0) {
+                Write-Host "No file changes detected."
+                exit 0
+            }
+            else {
+                throw "Git diff failed."
+            }
 
-                Write-Host "Successfully pushed Dev and Prod Helm tags to GitHub."
-            env:
-              GITHUB_PAT123: $(GitHubPAT123)
+            # Read GitHub PAT
+            $token = $env:GITHUB_PAT123
+
+            if ([string]::IsNullOrWhiteSpace($token)) {
+                throw "GitHub PAT is missing. Check GitHubPAT123 in the variable group."
+            }
+
+            $basic = [Convert]::ToBase64String(
+                [Text.Encoding]::ASCII.GetBytes("x-access-token:$token")
+            )
+
+            $repo = "https://github.com/sudarshansutar1995/Axion_CiCD_Helm_ARGOCD.git"
+
+            git -c "http.extraheader=AUTHORIZATION: basic $basic" push $repo HEAD:main
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "GitHub push failed. Verify PAT permissions, repository write access, and branch protection."
+            }
+
+            Write-Host "Successfully pushed Dev and Prod Helm tags to GitHub."
+
+        env:
+          GITHUB_PAT123: $(GitHubPAT123)
