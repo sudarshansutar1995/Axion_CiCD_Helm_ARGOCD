@@ -55,41 +55,90 @@ stages:
           $(Build.BuildId)-BuildId
 
 
-# ============================================================
-# Stage 2 - Helm Deploy
-# ============================================================
 
-- stage: Helm_Deploy_to_Cluster
-  displayName: Helm Deploy Data Simulator to Kubernetes
-  condition: eq('${{ parameters.Deploy_to_KubernetesCluster }}', 'true')
-
+- stage: Update_Helm_Tags
+  displayName: Update Dev and Prod Data Simulator Helm Tags
   jobs:
-
-  - job: Helm_Deploy_DataSimulator
-    displayName: Helm Deploy Data Simulator
-
+  - job: Update_Git_Files
+    displayName: Update Helm Values and Push to Azure Repos
     steps:
+    - checkout: self
+      persistCredentials: true
+      clean: true
 
-    - task: HelmDeploy@1
-      displayName: Helm Upgrade/Install Data Simulator
+    - task: PowerShell@2
+      displayName: Update Helm Tags and Push to Azure Repos
+      env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
       inputs:
-        connectionType: 'Azure Resource Manager'
-        azureSubscription: 'axion-helm-project'
-        azureResourceGroup: 'rg_sudarshan'
-        kubernetesCluster: 'kub-sudarshan'
+        targetType: inline
+        script: |
+          $ErrorActionPreference = "Stop"
+          $tag = "$(Build.BuildId)-BuildId"
 
-        namespace: '${{ parameters.Namespace_Environment }}'
+          $files = @(
+            "axion-data-simulator/helm/values-dev.yaml",
+            "axion-data-simulator/helm/values-prod.yaml"
+          )
 
-        command: 'upgrade'
-        chartType: 'FilePath'
+          foreach ($file in $files) {
+            if (!(Test-Path $file)) {
+              throw "File not found: $file"
+            }
 
-        chartPath: 'axion-data-simulator/helm'
-        releaseName: 'axion-datasimulator'
+            $content = Get-Content $file -Raw
 
-        valueFile: 'axion-data-simulator/helm/values-${{ parameters.Namespace_Environment }}.yaml'
+            $pattern = '(?ms)(^image:\s*\r?\n(?:(?:[ \t]+.*)?\r?\n)*?[ \t]+(?:tag|tags):\s*)[^\r\n]*'
 
-        install: true
-        waitForExecution: false
+            if ([regex]::IsMatch($content, $pattern)) {
+              $content = [regex]::Replace(
+                $content,
+                $pattern,
+                [System.Text.RegularExpressions.MatchEvaluator]{
+                  param($m)
+                  $m.Groups[1].Value + '"' + $tag + '"'
+                },
+                1
+              )
+            }
+            else {
+              throw "Could not find tag/tags under image in $file. Check the YAML structure."
+            }
 
-        arguments: '--create-namespace --set image.tags=$(Build.BuildId)-BuildId'
+            Set-Content -Path $file -Value $content -NoNewline
+            Write-Host "Updated $file to tag $tag"
+          }
 
+          git config user.email "azure-pipelines@users.noreply.github.com"
+          git config user.name "Azure DevOps Pipeline"
+
+          git add -- $files
+          if ($LASTEXITCODE -ne 0) {
+            throw "Git add failed"
+          }
+
+          git diff --cached --quiet
+          $diffExitCode = $LASTEXITCODE
+
+          if ($diffExitCode -eq 0) {
+            Write-Host "No changes to commit."
+            exit 0
+          }
+
+          if ($diffExitCode -ne 1) {
+            throw "Git diff failed"
+          }
+
+          git commit -m "Update Data Simulator image tag to $tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Git commit failed"
+          }
+
+          git -c http.extraheader="AUTHORIZATION: bearer $env:SYSTEM_ACCESSTOKEN" `
+            push origin HEAD:refs/heads/main
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Push failed. Verify repository access, Contribute permission, and main branch policies."
+          }
+
+          Write-Host "Data Simulator Helm tags successfully pushed to Azure Repos."
