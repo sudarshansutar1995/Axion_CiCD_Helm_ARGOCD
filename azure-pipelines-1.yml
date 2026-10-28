@@ -53,7 +53,7 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              $token = $env:GITHUB_PAT
+              $token = $env:GITHUB_PAT123
               
               if ([string]::IsNullOrWhiteSpace($token)) {
                   throw "GitHub PAT was not passed. Check the GitHubPAT variable group and pipeline authorization."
@@ -122,7 +122,7 @@ stages:
                   Write-Host "No file changes detected."
               }
               
-              $token = $env:GITHUB_PAT
+              $token = $env:GITHUB_PAT123
               
               if ([string]::IsNullOrWhiteSpace($token)) {
                   throw "GitHub PAT is missing."
